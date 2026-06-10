@@ -4,11 +4,11 @@ streamlit_app.py — CIA DL2 Ticket Lookup
 Run locally:  streamlit run streamlit_app.py
 Deploy free:  https://share.streamlit.io
 """
- 
+
 import streamlit as st
 import sys, os, re, json, base64, ssl, datetime, collections
 import urllib.request
- 
+
 # ── PAGE CONFIG ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="DL2 Ticket Lookup — Wellhub",
@@ -16,20 +16,20 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
- 
+
 # ── CUSTOM CSS ────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
- 
+
   html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; }
- 
+
   .stApp { background: #080c12; color: #e2e8f0; }
- 
+
   /* Hide streamlit branding */
   #MainMenu, footer, header { visibility: hidden; }
   .block-container { padding-top: 2rem; padding-bottom: 2rem; max-width: 1100px; }
- 
+
   /* Header */
   .dash-header {
     background: #0d1117; border: 1px solid #1e2d3d; border-radius: 10px;
@@ -39,7 +39,7 @@ st.markdown("""
   .dash-header h1 { font-size: 22px; font-weight: 700; color: #e2e8f0; margin: 0 }
   .dash-header h1 em { color: #38bdf8; font-style: normal }
   .dash-header p { font-size: 12px; color: #64748b; margin: 4px 0 0 }
- 
+
   /* Search box */
   .stTextInput > div > div > input {
     background: #111827 !important; border: 1px solid #1e2d3d !important;
@@ -57,7 +57,7 @@ st.markdown("""
     font-size: 14px !important; width: 100%;
   }
   .stButton > button:hover { opacity: 0.85 !important }
- 
+
   /* Cards */
   .card {
     background: #0d1117; border: 1px solid #1e2d3d; border-radius: 10px;
@@ -69,7 +69,7 @@ st.markdown("""
   .card-red   { border-left: 3px solid #ef4444 }
   .card-purple{ border-left: 3px solid #a855f7 }
   .card-accent{ border-color: #1d4ed8 }
- 
+
   .card-title {
     font-size: 10px; font-weight: 700; text-transform: uppercase;
     letter-spacing: .09em; color: #64748b; margin-bottom: 10px;
@@ -78,7 +78,7 @@ st.markdown("""
   .card-title.orange { color: #f97316 }
   .card-title.green  { color: #22c55e }
   .card-title.purple { color: #a855f7 }
- 
+
   /* Ticket header */
   .ticket-header {
     background: #0d1117; border: 1px solid #1e2d3d; border-radius: 10px;
@@ -96,7 +96,7 @@ st.markdown("""
     font-size: 11px; font-weight: 600; background: #1a2232;
     border: 1px solid #2a3347; color: #94a3b8;
   }
- 
+
   /* ID chips */
   .id-chip {
     display: inline-block; background: #1a2232; border: 1px solid #2a3347;
@@ -106,7 +106,7 @@ st.markdown("""
   .id-chip.uuid  { color: #38bdf8; border-color: #1d4ed8 }
   .id-chip.email { color: #22c55e; border-color: #166534 }
   .id-chip.inv   { color: #f97316; border-color: #7c2d12 }
- 
+
   /* Links */
   .link-item {
     display: flex; align-items: flex-start; gap: 10px;
@@ -119,7 +119,7 @@ st.markdown("""
   }
   .link-label { font-size: 13px; color: #38bdf8; font-weight: 500 }
   .link-hint  { font-size: 11px; color: #475569; margin-top: 2px }
- 
+
   /* Issue explanation */
   .expl-item {
     padding: 6px 0; border-bottom: 1px solid #111827;
@@ -128,21 +128,21 @@ st.markdown("""
   .expl-item:last-child { border-bottom: none }
   .expl-arrow { color: #38bdf8; flex-shrink: 0 }
   .expl-check { color: #22c55e; flex-shrink: 0 }
- 
+
   /* Escalation box */
   .escalate-box {
     background: #1c1a10; border: 1px solid #92400e;
     border-radius: 6px; padding: 10px 14px;
     font-size: 12px; color: #fde68a; margin-top: 8px;
   }
- 
+
   /* Missing info */
   .missing-item {
     padding: 5px 0; font-size: 12px; color: #94a3b8;
     border-bottom: 1px solid #111827; display: flex; gap: 8px;
   }
   .missing-item:last-child { border-bottom: none }
- 
+
   /* Similar tickets */
   .similar-item {
     padding: 5px 0; font-size: 11px; color: #64748b;
@@ -150,7 +150,7 @@ st.markdown("""
     display: flex; gap: 6px;
   }
   .similar-item:last-child { border-bottom: none }
- 
+
   /* History */
   .hist-chip {
     display: inline-block; background: #111827; border: 1px solid #1e2d3d;
@@ -159,21 +159,21 @@ st.markdown("""
   }
 </style>
 """, unsafe_allow_html=True)
- 
+
 # ── JIRA + ANALYSIS LOGIC ─────────────────────────────────────────────────────
- 
+
 JIRA_EMAIL = "nadia.franca@gympass.com"
 JIRA_TOKEN = st.secrets["JIRA_TOKEN"]
 JIRA_BASE  = "https://gympass.atlassian.net"
- 
+
 _ssl = ssl.create_default_context()
 _ssl.check_hostname = False
 _ssl.verify_mode    = ssl.CERT_NONE
- 
+
 UUID_RE  = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', re.I)
 INV_RE   = re.compile(r'\b(INBR|INMX)_\d+\b', re.I)
 EMAIL_RE = re.compile(r'\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b')
- 
+
 CLASSIFIERS = [
     (["sftp","pgp","neptune","batch","encrypt","ssh","file upload","file format"],
      "SFTP / File delivery", "CIA-Integrations"),
@@ -188,7 +188,7 @@ CLASSIFIERS = [
     (["api ","bulk api","auto remove"], "API / Integration","CIA-Integrations"),
     (["w4c","portal","dashboard"], "W4C / Portal","CIA-Experience"),
 ]
- 
+
 ISSUE_EXPLANATIONS = {
     "SFTP / File delivery": {
         "what": "Client unable to deliver eligibility files via SFTP. Usually caused by wrong PGP format, wrong directory (/all/ vs /new/ vs /leavers/), or SSH key misconfiguration.",
@@ -250,7 +250,7 @@ ISSUE_EXPLANATIONS = {
         "escalate": "Escalate to CIA-Data & Insights if discrepancy persists after ruling out period mismatch",
     },
 }
- 
+
 def _text(node):
     if not node: return ""
     if isinstance(node, str): return node.strip()
@@ -261,7 +261,7 @@ def _text(node):
         t = _text(c)
         if t: parts.append(t)
     return " ".join(parts).strip()
- 
+
 def _field(v):
     if not v: return ""
     if isinstance(v, str): return v.strip()
@@ -273,7 +273,7 @@ def _field(v):
             elif isinstance(x, str): parts.append(x)
         return ", ".join(p for p in parts if p)
     return ""
- 
+
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_ticket(key):
     key = key.strip().upper()
@@ -293,7 +293,7 @@ def fetch_ticket(key):
         return None, key
     except Exception:
         return None, key
- 
+
 def analyze(data, key):
     f      = data.get("fields", {})
     b      = f.get("customfield_11060") or f.get("customfield_11059") or f.get("description")
@@ -306,13 +306,13 @@ def analyze(data, key):
     comments_raw = [_text(c.get("body","")) for c in (f.get("comment") or {}).get("comments",[])]
     comments = "\n\n---\n\n".join(comments_raw)
     full   = (summary + " " + desc + " " + comments).lower()
- 
+
     # Extract IDs
     uuids  = list(dict.fromkeys(UUID_RE.findall(desc + " " + comments)))[:3]
     invs   = list(dict.fromkeys(INV_RE.findall(desc + " " + comments)))[:3]
     emails = list(dict.fromkeys(EMAIL_RE.findall(desc + " " + comments)))
     emails = [e for e in emails if "gympass" not in e.lower() and "wellhub" not in e.lower()][:3]
- 
+
     # Classify
     category, squad_hint, explanation = "Other", "", {}
     for kws, cat, sq in CLASSIFIERS:
@@ -320,14 +320,14 @@ def analyze(data, key):
             category, squad_hint = cat, sq
             explanation = ISSUE_EXPLANATIONS.get(cat, {})
             break
- 
+
     # Missing info
     missing = []
     if not uuids:   missing.append("Client UUID — check Darwin or ask client")
     if not emails:  missing.append("Employee email — needed for Metabase lookup")
     if len(desc) < 80: missing.append("More detail on the issue — current description is very brief")
- 
-    # Metabase links — no pre-filled filters, open directly
+
+    # Darwin links (always first if UUID found)
     cid = uuids[0] if uuids else ""
     mb_links = []
     if cid:
@@ -337,18 +337,61 @@ def analyze(data, key):
             ("Subscription — Darwin", f"https://darwin.wellhub.com/clients/{cid}/subscription", ""),
             ("Billing History — Darwin", f"https://darwin.wellhub.com/clients/{cid}/billing-platform/billing-history", ""),
         ]
- 
-    # Metabase saved questions — open directly, filter manually inside
+
+    # GChat search links
+    ticket_search = urllib.parse.quote(key)
     mb_links += [
-        ("CX Eligibility V4", "https://metabase.us.gympass.cloud/question/44902-cx-eligibility-v4", "Filter by client_id or employee email"),
-        ("Notification Events", "https://metabase.us.gympass.cloud/question/44903", "Filter by employee email"),
-        ("Neptune Batches Overview", "https://metabase.us.gympass.cloud/question/45100", "Filter by client_id"),
-        ("EF Last 30 Client-Side Errors", "https://metabase.us.gympass.cloud/question/44901", "Filter by client_id"),
-        ("EF Check Updated and Created", "https://metabase.us.gympass.cloud/question/44900", "Filter by client_id"),
-        ("WH Details / Seat Usage", "https://metabase.us.gympass.cloud/question/44905", "Filter by client_id and billing period"),
-        ("Group from Staff Users W4C", "https://metabase.us.gympass.cloud/question/44907", "Filter by email"),
+        ("🔍 Search ticket in GChat", f"https://chat.google.com/search?q={ticket_search}", "Messages mentioning this ticket"),
     ]
- 
+    if cid:
+        uuid_search = urllib.parse.quote(cid)
+        mb_links += [
+            ("🔍 Search client UUID in GChat", f"https://chat.google.com/search?q={uuid_search}", "Messages mentioning this client"),
+        ]
+    if emails:
+        email_search = urllib.parse.quote(emails[0])
+        mb_links += [
+            ("🔍 Search employee email in GChat", f"https://chat.google.com/search?q={email_search}", "Messages mentioning this employee"),
+        ]
+
+    BASE = "https://metabase.data.prd.us.gympass.cloud/question#"
+
+    # Direct table links (Tables tab) — shown first
+    mb_links += [
+        ("auditlog_service.events", BASE + "eyJkYXRhc2V0X3F1ZXJ5Ijp7ImRhdGFiYXNlIjoxMywibGliL3R5cGUiOiJtYnFsL3F1ZXJ5Iiwic3RhZ2VzIjpbeyJsaWIvdHlwZSI6Im1icWwuc3RhZ2UvbWJxbCIsInNvdXJjZS10YWJsZSI6OTkxNzZ9XX0sImRpc3BsYXkiOiJ0YWJsZSIsInZpc3VhbGl6YXRpb25fc2V0dGluZ3MiOnt9fQ==", "Filter by occurred_at"),
+        ("data_store_clients.client_eligibility_methods", BASE + "eyJkYXRhc2V0X3F1ZXJ5Ijp7ImRhdGFiYXNlIjoxMywidHlwZSI6InF1ZXJ5IiwicXVlcnkiOnsic291cmNlLXRhYmxlIjo5ODE1NX19LCJkaXNwbGF5IjoidGFibGUiLCJ2aXN1YWxpemF0aW9uX3NldHRpbmdzIjp7fX0=", "Eligibility identifier and methods"),
+        ("data_store_clients.eligibility_attempt_events", BASE + "eyJkYXRhc2V0X3F1ZXJ5Ijp7ImRhdGFiYXNlIjoxMywidHlwZSI6InF1ZXJ5IiwicXVlcnkiOnsic291cmNlLXRhYmxlIjoxMDA1NDZ9fSwiZGlzcGxheSI6InRhYmxlIiwidmlzdWFsaXphdGlvbl9zZXR0aW5ncyI6e319", "Filter by client_id and date"),
+        ("data_store_clients.signup_verify_eligibility", BASE + "eyJkYXRhc2V0X3F1ZXJ5Ijp7ImRhdGFiYXNlIjoxMywidHlwZSI6InF1ZXJ5IiwicXVlcnkiOnsic291cmNlLXRhYmxlIjoxMDYyNDd9fSwiZGlzcGxheSI6InRhYmxlIiwidmlzdWFsaXphdGlvbl9zZXR0aW5ncyI6e319", "Filter by client_id — verification status and errors"),
+        ("data_store_clients.w4c_invoice_items", BASE + "eyJkYXRhc2V0X3F1ZXJ5Ijp7ImRhdGFiYXNlIjoxMywidHlwZSI6InF1ZXJ5IiwicXVlcnkiOnsic291cmNlLXRhYmxlIjoxMDYzNjZ9fSwiZGlzcGxheSI6InRhYmxlIiwidmlzdWFsaXphdGlvbl9zZXR0aW5ncyI6e319", "Filter by client_id and start_date"),
+        ("data_store_clients.w4c_historical_subscriber_seats", BASE + "eyJkYXRhc2V0X3F1ZXJ5Ijp7ImRhdGFiYXNlIjoxMywidHlwZSI6InF1ZXJ5IiwicXVlcnkiOnsic291cmNlLXRhYmxlIjoxMDk4NzR9fSwiZGlzcGxheSI6InRhYmxlIiwidmlzdWFsaXphdGlvbl9zZXR0aW5ncyI6e319", "Filter by client_id and start_date — seats per period"),
+        ("data_store_clients.w4c_eligible_members", BASE + "eyJkYXRhc2V0X3F1ZXJ5Ijp7ImRhdGFiYXNlIjoxMywidHlwZSI6InF1ZXJ5IiwicXVlcnkiOnsic291cmNlLXRhYmxlIjoxMDYyMzZ9fSwiZGlzcGxheSI6InRhYmxlIiwidmlzdWFsaXphdGlvbl9zZXR0aW5ncyI6e319", "All eligibles per client with status"),
+        ("data_store_clients.w4c_client_paid_subscriber_seats", BASE + "eyJkYXRhc2V0X3F1ZXJ5Ijp7ImRhdGFiYXNlIjoxMywidHlwZSI6InF1ZXJ5IiwicXVlcnkiOnsic291cmNlLXRhYmxlIjoxMTAzNzV9fSwiZGlzcGxheSI6InRhYmxlIiwidmlzdWFsaXphdGlvbl9zZXR0aW5ncyI6e319", "Filter by invoice_number"),
+        ("data_store_clients.w4c_upload_batches", BASE + "eyJkYXRhc2V0X3F1ZXJ5Ijp7ImRhdGFiYXNlIjoxMywidHlwZSI6InF1ZXJ5IiwicXVlcnkiOnsic291cmNlLXRhYmxlIjoxMjQ4MzR9fSwiZGlzcGxheSI6InRhYmxlIiwidmlzdWFsaXphdGlvbl9zZXR0aW5ncyI6e319", "Filter by client_id — error_category"),
+        ("data_store_clients.w4c_report_client_flexible_rate_per_eligibles", BASE + "eyJkYXRhc2V0X3F1ZXJ5Ijp7ImRhdGFiYXNlIjoxMywidHlwZSI6InF1ZXJ5IiwicXVlcnkiOnsic291cmNlLXRhYmxlIjoxMTUxMTJ9fSwiZGlzcGxheSI6InRhYmxlIiwidmlzdWFsaXphdGlvbl9zZXR0aW5ncyI6e319", "Filter by invoice_number"),
+        ("satya_dimension_store.clients", BASE + "eyJkYXRhc2V0X3F1ZXJ5Ijp7ImRhdGFiYXNlIjoxMywidHlwZSI6InF1ZXJ5IiwicXVlcnkiOnsic291cmNlLXRhYmxlIjo1NDMwOX19LCJkaXNwbGF5IjoidGFibGUiLCJ2aXN1YWxpemF0aW9uX3NldHRpbmdzIjp7fX0=", "All clients — area and cancellation reason"),
+        ("satya_exploration_store.eligibility_batches", BASE + "eyJkYXRhc2V0X3F1ZXJ5Ijp7ImRhdGFiYXNlIjoxMywidHlwZSI6InF1ZXJ5IiwicXVlcnkiOnsic291cmNlLXRhYmxlIjoxMjQ3MzZ9fSwiZGlzcGxheSI6InRhYmxlIiwidmlzdWFsaXphdGlvbl9zZXR0aW5ncyI6e319", "Filter by client_id — batch error_category"),
+        ("satya_exploration_store.flat_client_invoice_items", BASE + "eyJkYXRhc2V0X3F1ZXJ5Ijp7ImRhdGFiYXNlIjoxMywidHlwZSI6InF1ZXJ5IiwicXVlcnkiOnsic291cmNlLXRhYmxlIjo3ODE0NX19LCJkaXNwbGF5IjoidGFibGUiLCJ2aXN1YWxpemF0aW9uX3NldHRpbmdzIjp7fX0=", "Filter by client_id and start_date — flat rate only"),
+        ("neptune.batch", BASE + "eyJkYXRhc2V0X3F1ZXJ5Ijp7ImRhdGFiYXNlIjoxMywidHlwZSI6InF1ZXJ5IiwicXVlcnkiOnsic291cmNlLXRhYmxlIjoxMDA3NDJ9fSwiZGlzcGxheSI6InRhYmxlIiwidmlzdWFsaXphdGlvbl9zZXR0aW5ncyI6e319", "Filter by entity_id — type, status, date, errors"),
+        ("neptune.diff_result", BASE + "eyJkYXRhc2V0X3F1ZXJ5Ijp7ImRhdGFiYXNlIjoxMywidHlwZSI6InF1ZXJ5IiwicXVlcnkiOnsic291cmNlLXRhYmxlIjo5NzQ0N319LCJkaXNwbGF5IjoidGFibGUiLCJ2aXN1YWxpemF0aW9uX3NldHRpbmdzIjp7fX0=", "Filter by batch_id — what changed"),
+        ("neptune.batch_row_errors", BASE + "eyJkYXRhc2V0X3F1ZXJ5Ijp7ImRhdGFiYXNlIjoxMywidHlwZSI6InF1ZXJ5IiwicXVlcnkiOnsic291cmNlLXRhYmxlIjoxMDE0NDN9fSwiZGlzcGxheSI6InRhYmxlIiwidmlzdWFsaXphdGlvbl9zZXR0aW5ncyI6e319", "Filter by batch_id — exact row errors"),
+        ("neptune.batch_stats", BASE + "eyJkYXRhc2V0X3F1ZXJ5Ijp7ImRhdGFiYXNlIjoxMywidHlwZSI6InF1ZXJ5IiwicXVlcnkiOnsic291cmNlLXRhYmxlIjoxMDA3MzB9fSwiZGlzcGxheSI6InRhYmxlIiwidmlzdWFsaXphdGlvbl9zZXR0aW5ncyI6e319", "Newcomers, keepers, leavers, threshold"),
+        ("neptune.threshold", BASE + "eyJkYXRhc2V0X3F1ZXJ5Ijp7ImRhdGFiYXNlIjoxMywidHlwZSI6InF1ZXJ5IiwicXVlcnkiOnsic291cmNlLXRhYmxlIjoxMTE0Mzl9fSwiZGlzcGxheSI6InRhYmxlIiwidmlzdWFsaXphdGlvbl9zZXR0aW5ncyI6e319", "Client movement limits"),
+        ("snowplow.events", BASE + "eyJkYXRhc2V0X3F1ZXJ5Ijp7ImRhdGFiYXNlIjoxMywidHlwZSI6InF1ZXJ5IiwicXVlcnkiOnsic291cmNlLXRhYmxlIjoxMTg5fX0sImRpc3BsYXkiOiJ0YWJsZSIsInZpc3VhbGl6YXRpb25fc2V0dGluZ3MiOnt9fQ==", "Platform events and errors"),
+    ]
+
+    # Saved questions — shown after table links
+    mb_links += [
+        ("CX Eligibility V4", "https://metabase.data.prd.us.gympass.cloud/question/44902-cx-eligibility-v4", "Filter by client_id or eligible_email"),
+        ("Notification Events to Recipient", "https://metabase.data.prd.us.gympass.cloud/question/38552-notification-events-to-a-recipient", "Filter by email"),
+        ("Group from Staff Users W4C", "https://metabase.data.prd.us.gympass.cloud/question/43295-group-from-staff-users-w4c", "Filter by email"),
+        ("Eligibles not reassociated", "https://metabase.data.prd.us.gympass.cloud/question/52579-eligibles-not-reassociated", "Filter by client_id and start_date"),
+        ("Case count eligible", "https://metabase.data.prd.us.gympass.cloud/question/79398-case-count-eligible", "Eligible_unique_id increment/decrement"),
+        ("Eligibles blocked to update payroll", "https://metabase.data.prd.us.gympass.cloud/question/80825-eligibles-blocked-to-update-payroll", "Filter by client_id or email"),
+        ("Olympus Snowplow Events", "https://metabase.data.prd.us.gympass.cloud/question/46765-olympus-snowplow-events", "Filter by eventCategory and client"),
+        ("Check-ins / User activity", BASE + "eyJkYXRhc2V0X3F1ZXJ5Ijp7ImxpYi90eXBlIjoibWJxbC9xdWVyeSIsImRhdGFiYXNlIjoxMywic3RhZ2VzIjpbeyJsaWIvdHlwZSI6Im1icWwuc3RhZ2UvbWJxbCIsInNvdXJjZS10YWJsZSI6MTA5NTI4LCJvcmRlci1ieSI6W1siZGVzYyIseyJsaWIvdXVpZCI6IjE3ZjBiNjZiLWRiOGQtNDM5OC1iMDYyLTY1NDA1OTkyZTc0OSJ9LFsiZmllbGQiLHsiZWZmZWN0aXZlLXR5cGUiOiJ0eXBlL0RhdGUiLCJsaWIvdXVpZCI6ImJiOTlhOTk3LWFjMmQtNDlkZi1iNTE1LTdhOTgzZjQwZjJiYSIsImJhc2UtdHlwZSI6InR5cGUvRGF0ZSJ9LDM3MDI3NDBdXV19XX0sImRpc3BsYXkiOiJ0YWJsZSIsInZpc3VhbGl6YXRpb25fc2V0dGluZ3MiOnt9LCJvcmlnaW5hbF9jYXJkX2lkIjpudWxsLCJ0eXBlIjoicXVlc3Rpb24ifQ==", "Filter by email and date"),
+        ("Staff users table (W4C)", BASE + "eyJkYXRhc2V0X3F1ZXJ5Ijp7ImRhdGFiYXNlIjoxMywibGliL3R5cGUiOiJtYnFsL3F1ZXJ5Iiwic3RhZ2VzIjpbeyJsaWIvdHlwZSI6Im1icWwuc3RhZ2UvbWJxbCIsInNvdXJjZS10YWJsZSI6MTA3MTEyfV19LCJkaXNwbGF5IjoidGFibGUiLCJ2aXN1YWxpemF0aW9uX3NldHRpbmdzIjp7fX0=", "W4C users and admins"),
+    ]
+
     return {
         "key": key, "summary": summary, "status": status, "created": created,
         "squad": squad, "dl2": dl2, "desc": desc, "comments": comments_raw,
@@ -357,9 +400,9 @@ def analyze(data, key):
         "explanation": explanation, "missing": missing, "mb_links": mb_links,
         "url": f"{JIRA_BASE}/browse/{key}",
     }
- 
+
 # ── RENDER ────────────────────────────────────────────────────────────────────
- 
+
 def render_result(a):
     # Ticket header
     st.markdown(f"""
@@ -378,16 +421,16 @@ def render_result(a):
       </div>
     </div>
     """, unsafe_allow_html=True)
- 
+
     col1, col2 = st.columns([3, 2])
- 
+
     with col1:
         # Description
         if a["desc"]:
             st.markdown('<div class="card card-blue"><div class="card-title blue">📋 Issue description</div>', unsafe_allow_html=True)
             st.markdown(f'<div style="font-size:13px;color:#94a3b8;line-height:1.7;">{a["desc"][:800]}</div>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
- 
+
         # Extracted IDs
         id_html = '<div class="card card-orange"><div class="card-title orange">🔍 Extracted identifiers</div>'
         if a["uuids"]:
@@ -403,7 +446,7 @@ def render_result(a):
             id_html += '<span style="color:#475569;font-size:12px;">No identifiers found in ticket text</span>'
         id_html += '</div>'
         st.markdown(id_html, unsafe_allow_html=True)
- 
+
         # Issue explanation
         expl = a["explanation"]
         if expl:
@@ -423,14 +466,14 @@ def render_result(a):
             if expl.get("escalate"):
                 st.markdown(f'<div class="escalate-box"><strong>When to escalate:</strong> {expl["escalate"]}</div>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
- 
+
         # Comments
         if a["comments"]:
             with st.expander(f"💬 Comments ({len(a['comments'])})"):
                 for i, c in enumerate(a["comments"], 1):
                     st.markdown(f"**Comment {i}**")
                     st.markdown(f'<div style="font-size:12px;color:#94a3b8;line-height:1.6;background:#0d1117;border:1px solid #1e2d3d;border-radius:6px;padding:10px;margin-bottom:8px;">{c[:500]}</div>', unsafe_allow_html=True)
- 
+
     with col2:
         # Metabase + Darwin links
         if a["mb_links"]:
@@ -446,14 +489,14 @@ def render_result(a):
                 </div>
                 """, unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
- 
+
         # Missing info
         if a["missing"]:
             st.markdown('<div class="card card-red"><div class="card-title" style="color:#ef4444;">⚠ Missing info — request from client</div>', unsafe_allow_html=True)
             missing_html = "".join(f'<div class="missing-item"><span style="color:#ef4444;">⚠</span>{m}</div>' for m in a["missing"])
             st.markdown(missing_html, unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
- 
+
         # Category + squad
         st.markdown(f"""
         <div class="card card-green">
@@ -465,9 +508,9 @@ def render_result(a):
           {f'<div><div style="font-size:10px;color:#475569;margin-bottom:3px;">Suggested squad</div><div style="font-size:13px;font-weight:600;color:#22c55e;">{a["squad_hint"]}</div></div>' if a["squad_hint"] else ''}
         </div>
         """, unsafe_allow_html=True)
- 
+
 # ── MAIN APP ──────────────────────────────────────────────────────────────────
- 
+
 def main():
     # Header
     st.markdown("""
@@ -478,7 +521,7 @@ def main():
       </div>
     </div>
     """, unsafe_allow_html=True)
- 
+
     # Search input
     col_inp, col_btn = st.columns([5, 1])
     with col_inp:
@@ -490,15 +533,15 @@ def main():
         )
     with col_btn:
         search = st.button("Look up →", use_container_width=True)
- 
+
     # Trigger on Enter or button click
     if search or (ticket_input and ticket_input != st.session_state.get("last_lookup","")):
         if ticket_input.strip():
             st.session_state["last_lookup"] = ticket_input.strip()
- 
+
             with st.spinner(f"Fetching {ticket_input.strip().upper()}…"):
                 data, key = fetch_ticket(ticket_input.strip())
- 
+
             if data is None:
                 st.error(f"❌ Ticket **{key}** not found in Jira. Check the ticket number and try again.")
             else:
@@ -507,11 +550,11 @@ def main():
                 if key not in hist:
                     hist.insert(0, key)
                     st.session_state["history"] = hist[:8]
- 
+
                 a = analyze(data, key)
                 st.divider()
                 render_result(a)
- 
+
     # History chips
     hist = st.session_state.get("history", [])
     if hist:
@@ -523,6 +566,6 @@ def main():
                 if st.button(h, key=f"hist_{h}"):
                     st.session_state["ticket_input"] = h
                     st.rerun()
- 
+
 if __name__ == "__main__":
     main()
