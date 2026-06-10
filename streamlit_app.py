@@ -338,20 +338,18 @@ def analyze(data, key):
             ("Billing History — Darwin", f"https://darwin.wellhub.com/clients/{cid}/billing-platform/billing-history", ""),
         ]
 
-    # GChat search links
-    ticket_search = urllib.parse.quote(key)
+    # GChat search links — via Gmail search (in:chats operator)
+    ticket_search = urllib.parse.quote(f"in:chats {key}")
     mb_links += [
-        ("🔍 Search ticket in GChat", f"https://chat.google.com/search?q={ticket_search}", "Messages mentioning this ticket"),
+        ("🔍 Search ticket in GChat", f"https://mail.google.com/chat/#search/{urllib.parse.quote(key)}", "Opens Chat search for this ticket number"),
     ]
     if cid:
-        uuid_search = urllib.parse.quote(cid)
         mb_links += [
-            ("🔍 Search client UUID in GChat", f"https://chat.google.com/search?q={uuid_search}", "Messages mentioning this client"),
+            ("🔍 Search client UUID in GChat", f"https://mail.google.com/chat/#search/{urllib.parse.quote(cid)}", "Opens Chat search for this client"),
         ]
     if emails:
-        email_search = urllib.parse.quote(emails[0])
         mb_links += [
-            ("🔍 Search employee email in GChat", f"https://chat.google.com/search?q={email_search}", "Messages mentioning this employee"),
+            ("🔍 Search employee email in GChat", f"https://mail.google.com/chat/#search/{urllib.parse.quote(emails[0])}", "Opens Chat search for this employee"),
         ]
 
     BASE = "https://metabase.data.prd.us.gympass.cloud/question#"
