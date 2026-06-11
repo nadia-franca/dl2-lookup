@@ -403,6 +403,97 @@ def analyze(data, key):
         "url": f"{JIRA_BASE}/browse/{key}",
     }
 
+# ── PATTERN INSIGHTS — from All Jira Tickets sheet (1SKUjbXOxsc7fB3KFq9JsZGOz6UrAWgTFiZI28hHz_vM) ──
+# Counts and resolution summaries from 2,725 tickets (Jira + Zendesk, May 2025 – present)
+# To refresh: paste new sheet content in the next session and I'll update these counts.
+
+PATTERN_INSIGHTS = {
+    "EF Process / Upload": {
+        "count":      47,
+        "squad":      "CIA-Client Journey",
+        "how_solved": "Most resolved by identifying the exact error in neptune.batch — common causes: employee with no email key, 10% wipe threshold exceeded, or sheet tab name over 31 characters. Client fixes the file and re-uploads.",
+        "tip":        "Always get the batch_id first. The generic error message in W4C never tells the full story — Grafana or neptune.batch_row_errors does.",
+    },
+    "Report / Data access": {
+        "count":      42,
+        "squad":      "CIA-Data & Insights",
+        "how_solved": "Majority resolved by explaining the billing period vs calendar month difference. Subscriber Snapshot ≠ Seat Usage. Once shown the correct Metabase query for their billing dates, most clients confirm the numbers match.",
+        "tip":        "Ask for the invoice ID and billing period dates first. Never compare numbers without knowing which period each report covers.",
+    },
+    "Roles / Permissions": {
+        "count":      19,
+        "squad":      "CIA-Client Journey",
+        "how_solved": "Almost always a multi-entity setup gap — admin has entity-level access but is missing group-level access. Resolved by asking the group admin to grant the role at group level in W4C.",
+        "tip":        "Check both entity and group level in the staff users Metabase query. One missing role at group level blocks all uploads.",
+    },
+    "SFTP / File delivery": {
+        "count":      24,  # SFTP + SFTP_EF_Process combined
+        "squad":      "CIA-Integrations",
+        "how_solved": "Most resolved by identifying the PGP encryption format error or wrong directory in Grafana. Client corrects the file format or delivery path and re-uploads. SSH key issues require IT coordination.",
+        "tip":        "Always filter Grafana by batch_id, not client_id. The file format error is logged at batch level and won't appear in client-level queries.",
+    },
+    "I2S / Invitation": {
+        "count":      12,
+        "squad":      "CIA-Subscription boosters",
+        "how_solved": "Most resolved by checking Darwin settings history tab — Smart Invites was active at the time of the base update. Clients confirmed the behavior is expected once explained. No recall possible after send.",
+        "tip":        "Always check the history tab in Darwin, not just the current state. The setting is often toggled off after the emails go out.",
+    },
+    "Sign-up / Access": {
+        "count":      33,
+        "squad":      "CIA-Wellbeing Access",
+        "how_solved": "Split between Capri blocks (domain flagged as unsafe) and employees not yet in eligibility base. Capri cases escalated to CIA-Wellbeing Access. Eligibility gaps resolved after client updates their file.",
+        "tip":        "Check Capri real-time (question 62225) before anything else — it's instant and rules out the most common cause in seconds.",
+    },
+    "Email / Domain": {
+        "count":      8,
+        "squad":      "CIA-Wellbeing Access",
+        "how_solved": "Resolved by confirming the domain is not configured in Darwin or is in Capri's suppression list. Client updates employee email or IT team whitelists the Wellhub sender domain.",
+        "tip":        "Ask for the exact email address the employee is using — domain mismatches are easy to spot once you have it.",
+    },
+    "W4C / Portal": {
+        "count":      4,
+        "squad":      "CIA-Experience",
+        "how_solved": "Most were D-1 delay issues — data looked wrong but resolved the next day. A few were portal display bugs escalated to CIA-Experience.",
+        "tip":        "Always ask the client to check again the following day before escalating. The D-1 delay explains most W4C count discrepancies.",
+    },
+    "API / Integration": {
+        "count":      3,
+        "squad":      "CIA-Integrations",
+        "how_solved": "Resolved by validating the API employee ID format and checking for duplicate IDs in the client's system.",
+        "tip":        "Ask for the specific API error code and the employee_id being sent. Format mismatches are the most common cause.",
+    },
+}
+
+def render_insights(category):
+    """Render the pattern insight card for the current issue category."""
+    insight = PATTERN_INSIGHTS.get(category)
+    if not insight:
+        return
+
+    count    = insight["count"]
+    squad    = insight["squad"]
+    solved   = insight["how_solved"]
+    tip      = insight["tip"]
+
+    st.markdown(f"""
+    <div style="background:#0d1117;border:1px solid #1e3a5f;border-left:3px solid #0ea5e9;
+      border-radius:8px;padding:16px 20px;margin-bottom:14px;">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#0ea5e9;">
+          📊 Pattern from {count} similar tickets
+        </div>
+        <div style="font-size:11px;color:#475569;">→ {esc(squad)}</div>
+      </div>
+      <div style="font-size:12px;color:#94a3b8;line-height:1.7;margin-bottom:10px;">
+        <strong style="color:#e2e8f0;">How it's usually solved:</strong> {esc(solved)}
+      </div>
+      <div style="background:#061926;border:1px solid #0c2d45;border-radius:6px;
+        padding:8px 12px;font-size:12px;color:#38bdf8;">
+        💡 <strong>Tip:</strong> {esc(tip)}
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
 # ── CASE STUDIES KNOWLEDGE BASE ──────────────────────────────────────────────
 # Source: "Case Studies" Google Doc (1roLDRm1_DEpe_vSOVhcQr5oc-uBhR12Xc9jTLvQL9NY)
 # To update: paste new tab content here when you add a new case to the doc.
@@ -437,6 +528,40 @@ CASE_STUDIES = [
             "Re-uploading after the fix resolved the issue completely."
         ),
         "gchat": "https://chat.google.com/room/AAAA2xtyA8s/9AkjJtatYII/9AkjJtatYII?cls=10",
+    },
+    {
+        "ticket":     "MAIN-73881",
+        "title":      "Payroll enabled in eligibility file but not reflecting in W4C — blocked flag",
+        "category":   "EF Process / Upload",
+        "keywords":   ["payroll", "payroll enabled", "folha", "payment method", "payroll update",
+                       "block_eligible_to_payroll_update", "hades", "blocked", "eligible to payroll",
+                       "payment", "w4c", "attribute", "flag"],
+        "summary":    (
+            "Client was setting 'Payroll Enabled = Yes' in their eligibility file for an employee, "
+            "but the change was not reflecting in W4C — the payroll option remained disabled "
+            "in the Employees tab as a payment method."
+        ),
+        "steps": [
+            "Checked the last batches related to the employee in Metabase (diff_result table), confirmed the 'eligible_to_payroll = True' attribute was present in the batch",
+            "Confirmed the most recent batch was a successful one_by_one update on 08/06",
+            "Searched the employee in the Hades query (CX Eligibility V4 / question 44902), filtered by employee_id — found the payroll attribute was still False in Hades",
+            "Added the field 'h.block_eligible_to_payroll_update' to the Hades query to check for the blocked flag",
+            "Confirmed the employee had the block flag active — silently preventing payroll from being set to True",
+            "Checked Metabase question 80825 (eligibles-blocked-to-update-payroll) filtered by client_id to see all blocked eligibles",
+        ],
+        "root_cause": (
+            "The employee was flagged with 'block_eligible_to_payroll_update'. "
+            "When this flag is active, any attempt to set payroll = True is silently ignored — "
+            "the system keeps it as False without any error message to the client."
+        ),
+        "resolution": (
+            "Escalate to CIA-Client Journey to remove the block flag for the affected employee. "
+            "To identify all blocked employees for a client, use Metabase question 80825 "
+            "(eligibles-blocked-to-update-payroll) filtered by client_id or email. "
+            "To verify if a specific employee is blocked, add the field "
+            "'h.block_eligible_to_payroll_update' to the Hades query."
+        ),
+        "gchat": "",
     },
 ]
 
@@ -630,6 +755,9 @@ def render_result(a):
           {f'<div><div style="font-size:10px;color:#475569;margin-bottom:3px;">Suggested squad</div><div style="font-size:13px;font-weight:600;color:#22c55e;">{a["squad_hint"]}</div></div>' if a["squad_hint"] else ''}
         </div>
         """, unsafe_allow_html=True)
+
+    # Pattern insights card
+    render_insights(a["category"])
 
     # Case studies KB
     render_kb(a)
