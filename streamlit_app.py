@@ -9,6 +9,10 @@ import streamlit as st
 import sys, os, re, json, base64, ssl, datetime, collections
 import urllib.request
 
+def esc(s):
+    """Escape HTML special characters."""
+    return str(s).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace('"',"&quot;")
+
 # ── PAGE CONFIG ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="DL2 Ticket Lookup — Wellhub",
@@ -399,6 +403,126 @@ def analyze(data, key):
         "url": f"{JIRA_BASE}/browse/{key}",
     }
 
+# ── CASE STUDIES KNOWLEDGE BASE ──────────────────────────────────────────────
+# Source: "Case Studies" Google Doc (1roLDRm1_DEpe_vSOVhcQr5oc-uBhR12Xc9jTLvQL9NY)
+# To update: paste new tab content here when you add a new case to the doc.
+
+CASE_STUDIES = [
+    {
+        "ticket":     "MAIN-74306",
+        "title":      "INTERNAL_SERVER_ERROR on batch upload — invalid eligibility key",
+        "category":   "EF Process / Upload",
+        "keywords":   ["internal_server_error", "sftp", "w4c", "batch", "upload", "eligibility key",
+                       "invalid eligibility key", "ef", "neptune", "eligible"],
+        "summary":    (
+            "Client was getting INTERNAL_SERVER_ERROR on every batch upload attempt, "
+            "both via SFTP and the W4C portal. The error message was completely generic "
+            "with no specific detail shown in the UI."
+        ),
+        "steps": [
+            "Checked EF last unsuccessful files in Metabase (question 49588), filtered by client_id",
+            "Checked neptune.batch table in Metabase filtered by client_id to find the failed batch and get the batch_id",
+            "Searched Grafana logs filtering by batch_id, app = neptune, and the date of the upload attempt",
+            "Found the real error in Grafana: 'extracting eligibility key: invalid eligibility key'",
+            "Searched w4c_eligible_members table filtered by client_id and status = ELIGIBLE_HAS_NO_EMAIL",
+            "Found an eligible record with no email key — root cause confirmed",
+        ],
+        "root_cause": (
+            "One eligible record in the client's base had no email key. "
+            "Neptune failed when trying to extract the eligibility key from that record, "
+            "causing all uploads to fail with a generic internal server error."
+        ),
+        "resolution": (
+            "Client fixed the eligibility file to ensure all records have a valid email address. "
+            "Re-uploading after the fix resolved the issue completely."
+        ),
+        "gchat": "https://chat.google.com/room/AAAA2xtyA8s/9AkjJtatYII/9AkjJtatYII?cls=10",
+    },
+]
+
+def find_kb_matches(a):
+    """Find relevant case studies for the current ticket analysis."""
+    matches = []
+    ticket_text = (
+        a.get("category","") + " " +
+        a.get("summary","") + " " +
+        a.get("desc","") + " " +
+        a.get("dl2","")
+    ).lower()
+
+    for case in CASE_STUDIES:
+        score = 0
+        # Exact ticket match
+        if case["ticket"] == a.get("key",""):
+            score += 10
+        # Category match
+        if case["category"].lower() in ticket_text or \
+           a.get("category","").lower() in case["category"].lower():
+            score += 4
+        # Keyword match
+        for kw in case["keywords"]:
+            if kw.lower() in ticket_text:
+                score += 1
+        if score >= 3:
+            matches.append((score, case))
+
+    matches.sort(key=lambda x: -x[0])
+    return [c for _, c in matches[:3]]
+
+def render_kb(a):
+    """Render the KB / case studies section."""
+    matches = find_kb_matches(a)
+    if not matches:
+        return
+
+    st.markdown("---")
+    st.markdown("""
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;
+      color:#64748b;margin-bottom:12px;">
+      📚 From your Case Studies KB — similar cases
+    </div>
+    """, unsafe_allow_html=True)
+
+    for case in matches:
+        steps_html = "".join(
+            f'<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid #1a2232;font-size:12px;color:#94a3b8;">'
+            f'<span style="color:#38bdf8;flex-shrink:0;">{i+1}.</span>{esc(s)}</div>'
+            for i, s in enumerate(case["steps"])
+        )
+        gchat_html = ""
+        if case.get("gchat"):
+            gchat_html = f'<a href="{case["gchat"]}" target="_blank" style="font-size:11px;color:#38bdf8;">💬 View GChat discussion</a>'
+
+        st.markdown(f"""
+        <div class="card card-accent" style="margin-bottom:12px;">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px;">
+            <div>
+              <span style="font-family:'DM Mono',monospace;font-size:12px;font-weight:600;
+                color:#38bdf8;">{esc(case['ticket'])}</span>
+              <span style="font-size:11px;color:#475569;margin-left:10px;">{esc(case['category'])}</span>
+            </div>
+            {gchat_html}
+          </div>
+          <div style="font-size:13px;font-weight:600;color:#e2e8f0;margin-bottom:8px;">{esc(case['title'])}</div>
+          <div style="font-size:12px;color:#94a3b8;margin-bottom:12px;line-height:1.6;">{esc(case['summary'])}</div>
+          <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;
+            color:#475569;margin-bottom:6px;">Steps taken</div>
+          {steps_html}
+          <div style="margin-top:10px;padding:8px 12px;background:#061926;border:1px solid #0e3a52;
+            border-radius:6px;">
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;
+              color:#0ea5e9;margin-bottom:3px;">Root cause</div>
+            <div style="font-size:12px;color:#94a3b8;">{esc(case['root_cause'])}</div>
+          </div>
+          <div style="margin-top:8px;padding:8px 12px;background:#052e16;border:1px solid #166534;
+            border-radius:6px;">
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;
+              color:#22c55e;margin-bottom:3px;">Resolution</div>
+            <div style="font-size:12px;color:#94a3b8;">{esc(case['resolution'])}</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
 # ── RENDER ────────────────────────────────────────────────────────────────────
 
 def render_result(a):
@@ -506,6 +630,9 @@ def render_result(a):
           {f'<div><div style="font-size:10px;color:#475569;margin-bottom:3px;">Suggested squad</div><div style="font-size:13px;font-weight:600;color:#22c55e;">{a["squad_hint"]}</div></div>' if a["squad_hint"] else ''}
         </div>
         """, unsafe_allow_html=True)
+
+    # Case studies KB
+    render_kb(a)
 
 # ── MAIN APP ──────────────────────────────────────────────────────────────────
 
