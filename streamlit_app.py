@@ -179,18 +179,32 @@ INV_RE   = re.compile(r'\b(INBR|INMX)_\d+\b', re.I)
 EMAIL_RE = re.compile(r'\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b')
 
 CLASSIFIERS = [
-    (["sftp","pgp","neptune","batch","encrypt","ssh","file upload","file format"],
+    (["migra","reloca","visão unificada","visao unificada","cnpj","unified view","company group","move employee","mover colabor"],
+     "Migration / Relocation", "CIA-Client Journey"),
+    (["sftp","pgp","neptune","encrypt","ssh","gsftp","file format","file delivery"],
      "SFTP / File delivery", "CIA-Integrations"),
-    (["database_wipe","threshold","wipe","removal limit"], "EF Process / Upload","CIA-Client Journey"),
-    (["ef_process","ef upload","eligibility file","conflict version","relocation"], "EF Process / Upload","CIA-Client Journey"),
-    (["i2s","smart invite","invitation","convite","unexpected email"], "I2S / Invitation","CIA-Subscription boosters"),
-    (["sign up","sign-up","cadastro","verification code","pin"], "Sign-up / Access","CIA-Wellbeing Access"),
-    (["permission","role","permissão","access denied","staff user","admin"], "Roles / Permissions","CIA-Client Journey"),
-    (["report","relatório","discrepancy","divergência","mismatch"], "Report / Data access","CIA-Data & Insights"),
-    (["domain","domínio","email domain"], "Email / Domain","CIA-Wellbeing Access"),
-    (["capri","blocked email","suppression"], "Email / Domain","CIA-Wellbeing Access"),
-    (["api ","bulk api","auto remove"], "API / Integration","CIA-Integrations"),
-    (["w4c","portal","dashboard"], "W4C / Portal","CIA-Experience"),
+    (["database_wipe","threshold","wipe","removal limit"],
+     "EF Process / Upload", "CIA-Client Journey"),
+    (["ef_process","ef upload","eligibility file","conflict version","batch upload","lote"],
+     "EF Process / Upload", "CIA-Client Journey"),
+    (["i2s","smart invite","invitation","convite","unexpected email","e-mail inesperado"],
+     "I2S / Invitation", "CIA-Subscription boosters"),
+    (["sign up","sign-up","cadastro","verification code","código de verificação","pin","reassociation"],
+     "Sign-up / Access", "CIA-Wellbeing Access"),
+    (["permission","role","permissão","access denied","acesso negado","staff user","admin access","cannot upload"],
+     "Roles / Permissions", "CIA-Client Journey"),
+    (["report","relatório","discrepancy","divergência","mismatch","subscriber count","contagem","invoice","fatura"],
+     "Report / Data access", "CIA-Data & Insights"),
+    (["domain","domínio","email domain","domínio de e-mail"],
+     "Email / Domain", "CIA-Wellbeing Access"),
+    (["capri","blocked email","e-mail bloqueado","suppression"],
+     "Email / Domain", "CIA-Wellbeing Access"),
+    (["payroll","folha de pagamento","folha salari","payment method","método de pagamento","block_eligible_to_payroll"],
+     "Payroll / Payment method", "CIA-Client Journey"),
+    (["api ","bulk api","auto remove","remoção automática"],
+     "API / Integration", "CIA-Integrations"),
+    (["w4c","portal","dashboard count","contagem"],
+     "W4C / Portal", "CIA-Experience"),
 ]
 
 ISSUE_EXPLANATIONS = {
@@ -724,63 +738,97 @@ HISTORICAL_KB = {
 }
 
 def generate_explanation(a):
-    """Call Claude API to generate a dynamic explanation based on ticket text + historical KB."""
-    import urllib.request, json as _json
-
-    category = a.get("category", "")
-    desc     = a.get("desc", "")[:600]
-    summary  = a.get("summary", "")
-    dl2      = a.get("dl2", "")
-    hist     = HISTORICAL_KB.get(category, {})
-    patterns = hist.get("patterns", [])
+    """Generate a specific explanation from the ticket's current behavior + comments + historical KB.
+    No API needed — built from the actual ticket content.
+    """
+    category   = a.get("category", "")
+    desc       = (a.get("desc", "") or "").strip()
+    summary    = (a.get("summary", "") or "").strip()
+    dl2        = (a.get("dl2", "") or "").strip()
+    comments   = a.get("comments", [])
+    hist       = HISTORICAL_KB.get(category, {})
+    patterns   = hist.get("patterns", [])
+    count      = hist.get("count", 0)
     resolution = hist.get("resolution", "")
-    count    = hist.get("count", 0)
 
     if not desc and not summary:
         return None
 
-    patterns_text = "\n".join(f"- {p}" for p in patterns) if patterns else "No historical patterns available."
+    # ── 1. Build the "what the client reported" section from current behavior ──
+    # Truncate cleanly at sentence boundary
+    raw = desc[:500]
+    if len(desc) > 500 and "." in raw:
+        raw = raw[:raw.rfind(".")+1]
 
-    prompt = f"""You are a Wellhub CIA DL2 support analyst. Read this ticket and produce a concise analysis.
+    # ── 2. Find matching historical pattern from the actual ticket text ──────
+    ticket_lower = (desc + " " + summary + " " + dl2).lower()
+    matched_patterns = []
+    for p in patterns:
+        # Check if any key phrase from the pattern appears in the ticket
+        p_words = [w.lower() for w in p.split() if len(w) > 4]
+        if sum(1 for w in p_words if w in ticket_lower) >= 2:
+            matched_patterns.append(p)
 
-TICKET SUMMARY: {summary}
-CURRENT BEHAVIOR (from Jira): {desc}
-DL2 CATEGORY: {dl2}
-CLASSIFIED AS: {category}
+    # ── 3. Find meaningful comments (skip Jira boilerplate) ─────────────────
+    boilerplate = [
+        "jira ticket has been successfully", "under analysis", "sla for this phase",
+        "stay tuned", "squad backlog", "squad analysis", "validate the ticket",
+        "clicking on the", "already closed", "business hours", "service desk team",
+        "open another ticket", "4 business hours"
+    ]
+    clean_comments = []
+    for c in comments[:6]:
+        cl = c.strip()
+        cl_low = cl.lower()
+        if len(cl) > 40 and not any(b in cl_low for b in boilerplate):
+            clean_comments.append(cl[:300])
+        if len(clean_comments) >= 2:
+            break
 
-HISTORICAL CONTEXT ({count} similar tickets in our database):
-Common patterns seen in similar tickets:
-{patterns_text}
-Typical resolution: {resolution}
+    # ── 4. Assemble the explanation ──────────────────────────────────────────
+    parts = []
 
-Write a short analysis (3-5 sentences) in English that:
-1. Summarises what the client is experiencing in plain language (1-2 sentences)
-2. Based on the historical patterns above, identifies the most likely cause for THIS specific ticket (1-2 sentences)
-3. Suggests the first concrete step to investigate (1 sentence)
+    # What the client reported (from current behavior)
+    parts.append(f"<strong>What the client reported:</strong> {raw}")
 
-Be specific to this ticket. Do not use bullet points. Do not add headers. Write in plain prose."""
-
-    try:
-        payload = _json.dumps({
-            "model": "claude-sonnet-4-6",
-            "max_tokens": 300,
-            "messages": [{"role": "user", "content": prompt}]
-        }).encode()
-
-        req = urllib.request.Request(
-            "https://api.anthropic.com/v1/messages",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST"
+    # Most likely cause from matched patterns
+    if matched_patterns:
+        parts.append(
+            f"<strong>Most likely cause</strong> based on {count} similar tickets: "
+            f"{matched_patterns[0]}."
         )
-        with urllib.request.urlopen(req, timeout=20) as r:
-            data = _json.loads(r.read())
-        blocks = data.get("content", [])
-        return " ".join(b.get("text","") for b in blocks if b.get("type")=="text").strip()
-    except Exception:
-        # Fallback: return static explanation if API fails
-        expl = a.get("explanation", {})
-        return expl.get("what", "") if expl else None
+    elif hist:
+        parts.append(
+            f"<strong>Historical context:</strong> This falls into a known pattern — "
+            f"seen {count} times. {resolution}"
+        )
+
+    # Relevant comment insight
+    if clean_comments:
+        comment_preview = clean_comments[0][:200]
+        parts.append(
+            f"<strong>From the ticket comments:</strong> \"{comment_preview}\""
+        )
+
+    # First investigation step
+    steps = {
+        "EF Process / Upload":       "Start by checking neptune.batch filtered by client_id to find the exact batch error — the W4C error message is always generic.",
+        "SFTP / File delivery":      "Filter Grafana by batch_id (not client_id) to find the real error — SFTP failures are logged at batch level.",
+        "Report / Data access":      "Ask the client for the invoice ID and billing period dates before comparing numbers — Subscriber Snapshot and Seat Usage cover different periods.",
+        "Roles / Permissions":       "Check Metabase question 43295 filtered by the admin's email at both entity and group level — the missing role is almost always at group level.",
+        "I2S / Invitation":          "Check the Darwin settings history tab (not current state) and cross-reference the email send timestamp with the last base update.",
+        "Sign-up / Access":          "Run Capri real-time check (question 62225) first — it rules out the most common cause in seconds.",
+        "Email / Domain":            "Confirm the employee's exact email domain and check if it's configured in Darwin.",
+        "Migration / Relocation":    "Check if the employees belong to the same company group — relocation across different groups is not supported via the unified view.",
+        "Payroll / Payment method":  "Add the field 'h.block_eligible_to_payroll_update' to the Hades query and check question 80825 for blocked eligibles.",
+        "API / Integration":         "Request the exact API error code and the employee_id being sent — format mismatches are the most common cause.",
+        "W4C / Portal":              "Ask the client to check again the next day — most W4C count discrepancies are D-1 delay issues.",
+    }
+    step = steps.get(category)
+    if step:
+        parts.append(f"<strong>First step:</strong> {step}")
+
+    return "<br><br>".join(parts)
 
 def render_classification(a):
     """Render data-driven classification card."""
@@ -870,8 +918,7 @@ def render_result(a):
         st.markdown(id_html, unsafe_allow_html=True)
 
         # Issue explanation — dynamic, generated from ticket text + historical KB
-        with st.spinner("Analysing issue..."):
-            dynamic_expl = generate_explanation(a)
+        dynamic_expl = generate_explanation(a)
         if dynamic_expl:
             st.markdown(f"""
             <div class="card card-accent">
