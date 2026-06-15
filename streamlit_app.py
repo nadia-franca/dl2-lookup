@@ -648,6 +648,181 @@ def render_kb(a):
         </div>
         """, unsafe_allow_html=True)
 
+# ── HISTORICAL KB DATA — from All Jira Tickets sheet ─────────────────────────
+# Real resolution patterns extracted from 2,725 tickets (May 2025 – present)
+
+HISTORICAL_KB = {
+    "EF Process / Upload": {
+        "count": 47, "squad": "CIA-Client Journey",
+        "patterns": [
+            "Relocation failed because the client did not meet all conditions — employee must belong to the same company group",
+            "Wrong format error on national_id — client needs to correct the field in the eligibility file",
+            "Wrong format on payroll field — file column format doesn't match expected values",
+            "File tab/sheet name longer than 31 characters causes internal server error",
+            "Employee with no email key causes INTERNAL_SERVER_ERROR on every batch — check neptune.batch_row_errors",
+            "Payroll field blocked by block_eligible_to_payroll_update flag — silently ignored without error",
+        ],
+        "resolution": "Client corrects the eligibility file and re-uploads. For server errors, check Grafana by batch_id for the real error message.",
+    },
+    "Report / Data access": {
+        "count": 42, "squad": "CIA-Data & Insights",
+        "patterns": [
+            "Client comparing Subscriber Snapshot (calendar month) vs Seat Usage (billing period) — different periods by design",
+            "Intermittent report download failure — check Grafana for the error at the time of download attempt",
+            "Payroll Deduction File not received — check if email was sent to staff user via Notification Events",
+            "Report shows different numbers due to GDPR anonymisation — user still counted in invoice but identity removed",
+            "Employee IDs updated after billing period — not reflected in deduction file for that period (expected behavior)",
+        ],
+        "resolution": "Explain the billing period vs calendar month difference using Metabase seat usage query. If genuinely wrong, notify OPS for invoice correction.",
+    },
+    "SFTP / File delivery": {
+        "count": 24, "squad": "CIA-Integrations",
+        "patterns": [
+            "Client sending PGP encrypted file with wrong format — must use encrypt-only flow, not sign+encrypt",
+            "File blocked before reaching Neptune — error appears in Grafana but not in Metabase client queries",
+            "Wrong directory used — client uploading to /all/ instead of /new/ or /leavers/",
+            "SSH key not registered or wrong PGP key format — check Grafana by batch_id",
+        ],
+        "resolution": "Filter Grafana by batch_id (not client_id) to find the real error. Most cases: client fixes the file format or directory and re-uploads.",
+    },
+    "Roles / Permissions": {
+        "count": 19, "squad": "CIA-Client Journey",
+        "patterns": [
+            "Admin missing group-level role in multi-entity setup — has entity access but not group access",
+            "Intermittent permission error — check staff users Metabase query for the exact role assignments",
+            "Solution rejected by client — issue escalated back to WIP for re-evaluation",
+        ],
+        "resolution": "Check both entity and group level in Metabase question 43295. Group admin grants the missing role at group level in W4C All Companies view.",
+    },
+    "I2S / Invitation": {
+        "count": 12, "squad": "CIA-Subscription boosters",
+        "patterns": [
+            "Employee email is invalid — DNS or email status inactive, Smart Invite failed to deliver",
+            "Solution rejected — issue under WIP for re-evaluation",
+            "Email marked as invalid due to inactive DNS — IT team needs to verify the domain",
+            "Smart Invites triggered by base update — fires for all employees not invited in 60+ days",
+        ],
+        "resolution": "Check Darwin settings history tab (not current state). Verify notification events for the send timestamp. Cross-reference with last base update date.",
+    },
+    "Sign-up / Access": {
+        "count": 33, "squad": "CIA-Wellbeing Access",
+        "patterns": [
+            "Employee email domain flagged by Capri as unsafe — check real-time Capri query",
+            "Employee not in eligibility base — D-1 delay, check again next day",
+            "Staff user account already exists — employee should use login, not sign-up",
+        ],
+        "resolution": "Check Capri real-time (question 62225) first. Then check eligibility status. For existing staff users, redirect to login flow.",
+    },
+    "Email / Domain": {
+        "count": 8, "squad": "CIA-Wellbeing Access",
+        "patterns": [
+            "Domain not configured in Darwin — employee email domain not recognised during sign-up",
+            "Email in Capri suppression list — previously bounced or marked unsafe",
+        ],
+        "resolution": "Confirm domain configuration in Darwin. For Capri blocks, escalate to CIA-Wellbeing Access to remove the suppression.",
+    },
+}
+
+def generate_explanation(a):
+    """Call Claude API to generate a dynamic explanation based on ticket text + historical KB."""
+    import urllib.request, json as _json
+
+    category = a.get("category", "")
+    desc     = a.get("desc", "")[:600]
+    summary  = a.get("summary", "")
+    dl2      = a.get("dl2", "")
+    hist     = HISTORICAL_KB.get(category, {})
+    patterns = hist.get("patterns", [])
+    resolution = hist.get("resolution", "")
+    count    = hist.get("count", 0)
+
+    if not desc and not summary:
+        return None
+
+    patterns_text = "\n".join(f"- {p}" for p in patterns) if patterns else "No historical patterns available."
+
+    prompt = f"""You are a Wellhub CIA DL2 support analyst. Read this ticket and produce a concise analysis.
+
+TICKET SUMMARY: {summary}
+ISSUE DESCRIPTION: {desc}
+DL2 CATEGORY: {dl2}
+CLASSIFIED AS: {category}
+
+HISTORICAL CONTEXT ({count} similar tickets in our database):
+Common patterns seen in similar tickets:
+{patterns_text}
+Typical resolution: {resolution}
+
+Write a short analysis (3-5 sentences) in English that:
+1. Summarises what the client is experiencing in plain language (1-2 sentences)
+2. Based on the historical patterns above, identifies the most likely cause for THIS specific ticket (1-2 sentences)
+3. Suggests the first concrete step to investigate (1 sentence)
+
+Be specific to this ticket. Do not use bullet points. Do not add headers. Write in plain prose."""
+
+    try:
+        payload = _json.dumps({
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 300,
+            "messages": [{"role": "user", "content": prompt}]
+        }).encode()
+
+        req = urllib.request.Request(
+            "https://api.anthropic.com/v1/messages",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=20) as r:
+            data = _json.loads(r.read())
+        blocks = data.get("content", [])
+        return " ".join(b.get("text","") for b in blocks if b.get("type")=="text").strip()
+    except Exception:
+        # Fallback: return static explanation if API fails
+        expl = a.get("explanation", {})
+        return expl.get("what", "") if expl else None
+
+def render_classification(a):
+    """Render data-driven classification card."""
+    category  = a.get("category", "Other")
+    squad_hint= a.get("squad_hint", "")
+    hist      = HISTORICAL_KB.get(category, {})
+    hist_squad= hist.get("squad", "")
+    count     = hist.get("count", 0)
+
+    # Use historical squad if available, fallback to classifier hint
+    display_squad = hist_squad or squad_hint
+
+    # Confidence: high if category matches historical data, medium otherwise
+    confidence     = "High" if hist else "Medium"
+    conf_color     = "#22c55e" if confidence == "High" else "#eab308"
+    conf_bg        = "#052e16" if confidence == "High" else "#1c1308"
+    conf_border    = "#166534" if confidence == "High" else "#713f12"
+
+    hist_note = ""
+    if count:
+        hist_note = f'<div style="font-size:11px;color:#475569;margin-top:6px;">Based on {count} similar tickets in your historical database</div>'
+
+    st.markdown(f"""
+    <div class="card card-green">
+      <div class="card-title green">🏷 Classification</div>
+      <div style="margin-bottom:10px;">
+        <div style="font-size:10px;color:#475569;margin-bottom:3px;">Issue category</div>
+        <div style="font-size:14px;font-weight:700;color:#e2e8f0;">{esc(category)}</div>
+      </div>
+      {f'''<div style="margin-bottom:10px;">
+        <div style="font-size:10px;color:#475569;margin-bottom:3px;">Suggested squad</div>
+        <div style="font-size:13px;font-weight:600;color:#22c55e;">{esc(display_squad)}</div>
+      </div>''' if display_squad else ''}
+      <div style="display:inline-block;background:{conf_bg};border:1px solid {conf_border};
+        border-radius:20px;padding:3px 10px;font-size:10px;font-weight:700;
+        letter-spacing:.07em;color:{conf_color};margin-top:4px;">
+        {confidence} confidence
+      </div>
+      {hist_note}
+    </div>
+    """, unsafe_allow_html=True)
+
 # ── RENDER ────────────────────────────────────────────────────────────────────
 
 def render_result(a):
@@ -694,25 +869,16 @@ def render_result(a):
         id_html += '</div>'
         st.markdown(id_html, unsafe_allow_html=True)
 
-        # Issue explanation
-        expl = a["explanation"]
-        if expl:
+        # Issue explanation — dynamic, generated from ticket text + historical KB
+        with st.spinner("Analysing issue..."):
+            dynamic_expl = generate_explanation(a)
+        if dynamic_expl:
             st.markdown(f"""
             <div class="card card-accent">
-              <div class="card-title blue">📖 Issue explanation — {a['category']}</div>
-              <div style="font-size:13px;color:#94a3b8;line-height:1.7;margin-bottom:12px;">{expl.get('what','')}</div>
+              <div class="card-title blue">📖 Issue explanation — {esc(a['category'])}</div>
+              <div style="font-size:13px;color:#94a3b8;line-height:1.8;">{dynamic_expl}</div>
+            </div>
             """, unsafe_allow_html=True)
-            if expl.get("why"):
-                st.markdown('<div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:#475569;margin-bottom:6px;">Why this happens</div>', unsafe_allow_html=True)
-                why_html = "".join(f'<div class="expl-item"><span class="expl-arrow">→</span>{w}</div>' for w in expl["why"])
-                st.markdown(why_html, unsafe_allow_html=True)
-            if expl.get("rules"):
-                st.markdown('<div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:#475569;margin:10px 0 6px;">Key rules</div>', unsafe_allow_html=True)
-                rules_html = "".join(f'<div class="expl-item"><span class="expl-check">✓</span>{r}</div>' for r in expl["rules"])
-                st.markdown(rules_html, unsafe_allow_html=True)
-            if expl.get("escalate"):
-                st.markdown(f'<div class="escalate-box"><strong>When to escalate:</strong> {expl["escalate"]}</div>', unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
 
         # Comments
         if a["comments"]:
@@ -744,17 +910,8 @@ def render_result(a):
             st.markdown(missing_html, unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
-        # Category + squad
-        st.markdown(f"""
-        <div class="card card-green">
-          <div class="card-title green">🏷 Classification</div>
-          <div style="margin-bottom:8px;">
-            <div style="font-size:10px;color:#475569;margin-bottom:3px;">Category</div>
-            <div style="font-size:13px;font-weight:600;color:#e2e8f0;">{a['category']}</div>
-          </div>
-          {f'<div><div style="font-size:10px;color:#475569;margin-bottom:3px;">Suggested squad</div><div style="font-size:13px;font-weight:600;color:#22c55e;">{a["squad_hint"]}</div></div>' if a["squad_hint"] else ''}
-        </div>
-        """, unsafe_allow_html=True)
+        # Classification card — data-driven
+        render_classification(a)
 
     # Pattern insights card
     render_insights(a["category"])
