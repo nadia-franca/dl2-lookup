@@ -300,7 +300,7 @@ def fetch_ticket(key):
 
 def analyze(data, key):
     f      = data.get("fields", {})
-    b      = f.get("customfield_11060") or f.get("customfield_11059") or f.get("description")
+    b      = f.get("customfield_11059") or f.get("customfield_11060") or f.get("description")
     desc   = _text(b)
     summary= f.get("summary","")
     status = f.get("status",{}).get("name","")
@@ -744,7 +744,7 @@ def generate_explanation(a):
     prompt = f"""You are a Wellhub CIA DL2 support analyst. Read this ticket and produce a concise analysis.
 
 TICKET SUMMARY: {summary}
-ISSUE DESCRIPTION: {desc}
+CURRENT BEHAVIOR (from Jira): {desc}
 DL2 CATEGORY: {dl2}
 CLASSIFIED AS: {category}
 
@@ -849,7 +849,7 @@ def render_result(a):
     with col1:
         # Description
         if a["desc"]:
-            st.markdown('<div class="card card-blue"><div class="card-title blue">📋 Issue description</div>', unsafe_allow_html=True)
+            st.markdown('<div class="card card-blue"><div class="card-title blue">📋 Current behavior</div>', unsafe_allow_html=True)
             st.markdown(f'<div style="font-size:13px;color:#94a3b8;line-height:1.7;">{a["desc"][:800]}</div>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
